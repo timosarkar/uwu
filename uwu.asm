@@ -5,88 +5,76 @@ BUFFER_SIZE equ 128
 
 start:
     ; --- open("test.txt", O_RDONLY, 0) ---
-    mov rax, 2          ; sys_open
-    mov rdi, filename   ; pointer to filename
-    xor rsi, rsi        ; O_RDONLY = 0
-    xor rdx, rdx        ; mode (ignored)
+    mov rax, 2
+    mov rdi, filename
+    xor rsi, rsi       ; O_RDONLY
+    xor rdx, rdx       ; mode
     syscall
-    mov r12, rax        ; save file descriptor
+    mov r12, rax       ; save file descriptor
 
-    xor r13, r13        ; r13 = bytes currently in buffer
+    xor r13, r13       ; r13 = buf_end (bytes in buffer)
+    xor r14, r14       ; r14 = line_start index
 
 read_loop:
-    ; --- read(fd, buffer+r13, BUFFER_SIZE-r13) ---
-    mov rax, 0          ; sys_read
-    mov rdi, r12        ; fd
-    lea rsi, [buffer + r13] ; address in buffer to read into
+    ; --- read into buffer at buf_end ---
+    mov rax, 0         ; sys_read
+    mov rdi, r12       ; fd
+    mov rsi, buffer
+    add rsi, r13       ; buffer + buf_end
     mov rdx, BUFFER_SIZE
-    sub rdx, r13        ; remaining space
+    sub rdx, r13       ; remaining space
     syscall
     cmp rax, 0
-    je done             ; EOF
-    add r13, rax        ; total bytes in buffer
+    je flush_remaining
+    add r13, rax       ; update buf_end
 
-    ; --- process buffer for lines ---
-    xor rbx, rbx        ; rbx = current index in buffer
+    xor rbx, rbx       ; rbx = line length counter
 process_buffer:
-    cmp rbx, r13
-    je shift_buffer     ; done processing
+    cmp r14, r13
+    je read_loop       ; processed all bytes
 
-    mov al, [buffer + rbx]
-    cmp al, 10          ; newline?
+    mov al, [buffer + r14]
+    cmp al, 10         ; newline?
     jne next_char
 
-    ; --- write line to stdout ---
-    mov rax, 1          ; sys_write
-    mov rdi, 1          ; stdout
-    lea rsi, [buffer]   ; start of buffer
+    ; --- compute address of line ---
+    mov rsi, buffer
+    mov rax, r14
+    sub rax, rbx       ; r14 - rbx
+    add rsi, rax       ; rsi = buffer + (r14 - rbx)
+
+    ; --- write the line to stdout ---
+    mov rax, 1         ; sys_write
+    mov rdi, 1
     mov rdx, rbx
+    inc rdx             ; include newline
     syscall
 
-    ; --- remove written line from buffer ---
-    mov rdx, r13
-    sub rdx, rbx
-    dec rdx              ; include newline
-    mov rsi, buffer
-    add rsi, rbx
-    inc rsi
-    mov rdi, buffer
-shift_loop:
-    cmp rdx, 0
-    je end_shift
-    mov al, [rsi]
-    mov [rdi], al
-    inc rsi
-    inc rdi
-    dec rdx
-    jmp shift_loop
-end_shift:
-    mov r13, r13
-    sub r13, rbx
-    dec r13
+    inc r14            ; move past newline
     xor rbx, rbx
-    jmp read_loop
+    jmp process_buffer
 
 next_char:
+    inc r14
     inc rbx
     jmp process_buffer
 
-shift_buffer:
-    ; if buffer full but no newline, flush it
-    cmp r13, BUFFER_SIZE
-    jne read_loop
+flush_remaining:
+    cmp r14, r13
+    je close_file
 
-    mov rax, 1          ; sys_write
-    mov rdi, 1
+    ; --- write leftover bytes ---
     mov rsi, buffer
+    mov rax, r14
+    sub rax, rbx
+    add rsi, rax
     mov rdx, r13
+    sub rdx, r14
     syscall
-    xor r13, r13        ; buffer empty
-    jmp read_loop
 
-done:
-    ; --- close(fd) ---
-    mov rax, 3          ; sys_close
+close_file:
+    ; --- close file ---
+    mov rax, 3
     mov rdi, r12
     syscall
 
@@ -99,4 +87,4 @@ segment readable writable
 buffer: times BUFFER_SIZE db 0
 
 segment readable
-filename: db "test.txt", 0
+filename: db "test.txt",
