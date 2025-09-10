@@ -1,8 +1,0 @@
-main: func(param: type) returntype {
-    return(param)
-}
-
-test: struct {
-    x: type
-    y: type
-}
